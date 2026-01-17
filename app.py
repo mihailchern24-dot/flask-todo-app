@@ -273,7 +273,7 @@ def check_reminders():
     return jsonify({'reminders': reminders})
 
 # ==================== Инициализация БД ====================
-@APP.before_first_request
+@APP.before_app_first_request
 def init_db():
     """Инициализация базы данных при первом запросе"""
     db.create_all()
