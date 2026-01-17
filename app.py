@@ -1,6 +1,5 @@
 """Основное приложение Flask для Render"""
 import os
-import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
@@ -18,7 +17,6 @@ def create_app():
                 static_url_path='/static')
     app.config.from_object(Config)
     
-    # Инициализация расширений
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
@@ -26,13 +24,11 @@ def create_app():
     
     return app
 
-# Создаем приложение
 APP = create_app()
 
 # ==================== Routes: Auth ====================
 @APP.route('/register', methods=['GET', 'POST'])
 def register():
-    """Регистрация нового пользователя"""
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
@@ -59,7 +55,6 @@ def register():
 
 @APP.route('/login', methods=['GET', 'POST'])
 def login():
-    """Вход в систему"""
     if current_user.is_authenticated:
         return redirect(url_for('index'))
     
@@ -82,28 +77,22 @@ def login():
 @APP.route('/logout')
 @login_required
 def logout():
-    """Выход из системы"""
     logout_user()
     flash('Вы вышли из системы', 'info')
     return redirect(url_for('login'))
 
-# ==================== Routes: Pages ====================
 @APP.route('/')
 @login_required
 def index():
-    """Главная страница с задачами"""
     return render_template('index.html', username=current_user.username)
 
 @APP.route('/about')
 def about():
-    """Страница "О проекте" (доступна без авторизации)"""
     return render_template('about.html')
 
-# ==================== API: Tasks ====================
 @APP.route('/api/tasks', methods=['GET'])
 @login_required
 def api_get_tasks():
-    """Получение списка задач с пагинацией"""
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', APP.config['ITEMS_PER_PAGE']))
@@ -111,7 +100,6 @@ def api_get_tasks():
         page = 1
         per_page = APP.config['ITEMS_PER_PAGE']
     
-    # Оптимизированный запрос с сортировкой
     query = Task.query.filter_by(
         user_id=current_user.id
     ).order_by(
@@ -150,7 +138,6 @@ def api_get_tasks():
 @APP.route('/api/tasks', methods=['POST'])
 @login_required
 def api_add_task():
-    """Добавление новой задачи"""
     data = request.json or {}
     
     title = data.get('title', '').strip()
@@ -160,7 +147,6 @@ def api_add_task():
     if not title:
         return jsonify({'error': 'Название задачи обязательно'}), 400
     
-    # Валидация даты
     if due_iso:
         try:
             datetime.fromisoformat(due_iso.replace('Z', '+00:00'))
@@ -193,7 +179,6 @@ def api_add_task():
 @APP.route('/api/tasks/<int:task_id>', methods=['PUT'])
 @login_required
 def api_update_task(task_id):
-    """Обновление задачи"""
     data = request.json or {}
     
     task = Task.query.get_or_404(task_id)
@@ -201,7 +186,6 @@ def api_update_task(task_id):
     if task.user_id != current_user.id:
         return jsonify({'error': 'Доступ запрещен'}), 403
     
-    # Обновляем только переданные поля
     if 'title' in data:
         task.title = data['title'].strip()
     if 'description' in data:
@@ -227,7 +211,6 @@ def api_update_task(task_id):
 @APP.route('/api/tasks/<int:task_id>', methods=['DELETE'])
 @login_required
 def api_delete_task(task_id):
-    """Удаление задачи"""
     task = Task.query.get_or_404(task_id)
     
     if task.user_id != current_user.id:
@@ -239,11 +222,9 @@ def api_delete_task(task_id):
     
     return jsonify({'success': True, 'id': task_id_str})
 
-# ==================== Проверка напоминаний ====================
 @APP.route('/api/check_reminders')
 @login_required
 def check_reminders():
-    """Проверка напоминаний (вызывается из JavaScript)"""
     now = datetime.now(timezone.utc)
     reminders = []
     
@@ -261,7 +242,7 @@ def check_reminders():
                 due = due.replace(tzinfo=timezone.utc)
             
             time_to_due = (due - now).total_seconds()
-            if 0 <= time_to_due <= 300:  # 5 минут до дедлайна
+            if 0 <= time_to_due <= 300:
                 reminders.append({
                     'id': str(task.id),
                     'title': task.title,
@@ -273,7 +254,6 @@ def check_reminders():
     
     return jsonify({'reminders': reminders})
 
-# ==================== Обработчики ошибок ====================
 @APP.errorhandler(404)
 def not_found_error(error):
     return render_template('404.html'), 404
@@ -283,16 +263,13 @@ def internal_error(error):
     db.session.rollback()
     return render_template('500.html'), 500
 
-# ==================== Инициализация БД при запуске ====================
+# Инициализация базы данных
 with APP.app_context():
     try:
         db.create_all()
-        print("✅ База данных успешно инициализирована")
+        print("✅ База данных инициализирована")
     except Exception as e:
-        print(f"❌ Ошибка инициализации базы данных: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ Ошибка БД: {e}")
 
-# ==================== Запуск приложения ====================
 if __name__ == '__main__':
     APP.run(host='0.0.0.0', port=5000, debug=False)
