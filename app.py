@@ -26,6 +26,7 @@ def create_app():
     
     return app
 
+# Создаем приложение
 APP = create_app()
 
 # ==================== Routes: Auth ====================
@@ -272,24 +273,6 @@ def check_reminders():
     
     return jsonify({'reminders': reminders})
 
-# ==================== Инициализация БД ====================
-@APP.before_app_first_request
-def init_db():
-    """Инициализация базы данных при первом запросе"""
-    with APP.app_context():
-        try:
-            db.create_all()
-            print("✅ База данных успешно инициализирована")
-        except Exception as e:
-            print(f"❌ Ошибка инициализации базы данных: {e}")
-            # Если ошибка, создаем таблицы принудительно
-            try:
-                from extensions import db
-                db.create_all()
-                print("✅ Таблицы созданы принудительно")
-            except:
-                print("❌ Не удалось создать таблицы")
-
 # ==================== Обработчики ошибок ====================
 @APP.errorhandler(404)
 def not_found_error(error):
@@ -300,8 +283,16 @@ def internal_error(error):
     db.session.rollback()
     return render_template('500.html'), 500
 
+# ==================== Инициализация БД при запуске ====================
+with APP.app_context():
+    try:
+        db.create_all()
+        print("✅ База данных успешно инициализирована")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации базы данных: {e}")
+        import traceback
+        traceback.print_exc()
+
 # ==================== Запуск приложения ====================
 if __name__ == '__main__':
-    with APP.app_context():
-        db.create_all()
     APP.run(host='0.0.0.0', port=5000, debug=False)
