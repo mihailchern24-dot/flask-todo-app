@@ -276,7 +276,19 @@ def check_reminders():
 @APP.before_app_first_request
 def init_db():
     """Инициализация базы данных при первом запросе"""
-    db.create_all()
+    with APP.app_context():
+        try:
+            db.create_all()
+            print("✅ База данных успешно инициализирована")
+        except Exception as e:
+            print(f"❌ Ошибка инициализации базы данных: {e}")
+            # Если ошибка, создаем таблицы принудительно
+            try:
+                from extensions import db
+                db.create_all()
+                print("✅ Таблицы созданы принудительно")
+            except:
+                print("❌ Не удалось создать таблицы")
 
 # ==================== Обработчики ошибок ====================
 @APP.errorhandler(404)
