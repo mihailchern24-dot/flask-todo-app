@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.env
+.env.local
+.env.*.local
+
+# Базы данных
+*.db
+*.sqlite3
+*.sqlite
+
+# Логи
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Системные
+.DS_Store
+Thumbs.db
+
+# Миграции (можно, но не обязательно)
+migrations/
+
+# Временные файлы
+tmp/
+temp/

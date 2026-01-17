@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Вход - Умная разгрузка{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <h1><i class="fas fa-sign-in-alt"></i> Вход в систему</h1>
+    
+    <form method="POST" class="auth-form">
+        <label>
+            Имя пользователя:
+            <input type="text" name="username" placeholder="Введите имя пользователя" required autofocus>
+        </label>
+        
+        <label>
+            Пароль:
+            <input type="password" name="password" placeholder="Введите пароль" required>
+        </label>
+        
+        <button type="submit">
+            <i class="fas fa-sign-in-alt"></i> Войти
+        </button>
+    </form>
+    
+    <div class="auth-links">
+        <p>Нет аккаунта? <a href="{{ url_for('register') }}">Зарегистрируйтесь</a></p>
+        <p><a href="{{ url_for('about') }}"><i class="fas fa-info-circle"></i> О проекте</a></p>
+    </div>
+</div>
+{% endblock %}

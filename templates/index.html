@@ -1,0 +1,595 @@
+{% extends "base.html" %}
+
+{% block title %}Задачи - Умная разгрузка{% endblock %}
+
+{% block extra_js %}
+<script>
+// ==================== Конфигурация ====================
+const CONFIG = {
+    itemsPerPage: 20,
+    checkRemindersInterval: 60000,  // Проверять напоминания каждую минуту
+    refreshTasksInterval: 30000,     // Обновлять задачи каждые 30 секунд
+    enableAutoRefresh: true
+};
+
+// ==================== Состояние приложения ====================
+let appState = {
+    currentPage: 1,
+    totalPages: 1,
+    totalTasks: 0,
+    isLoading: false,
+    lastUpdate: null,
+    autoRefreshInterval: null
+};
+
+// ==================== DOM элементы ====================
+const elements = {
+    tasks: document.getElementById('tasks'),
+    loadMore: document.getElementById('load-more'),
+    addBtn: document.getElementById('add'),
+    titleInput: document.getElementById('title'),
+    dueInput: document.getElementById('due'),
+    notificationContainer: document.getElementById('notification-container'),
+    tasksCount: document.getElementById('tasks-count'),
+    lastUpdate: document.getElementById('last-update'),
+    autoRefreshToggle: document.getElementById('auto-refresh-toggle')
+};
+
+// ==================== Функции работы с DOM ====================
+function escapeHTML(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatDateTime(isoString) {
+    if (!isoString) return 'Без срока';
+    
+    try {
+        const date = new Date(isoString);
+        const now = new Date();
+        const diffHours = Math.floor((date - now) / (1000 * 60 * 60));
+        
+        if (diffHours < 0) {
+            return `<span class="task-overdue">${date.toLocaleString()} (просрочено)</span>`;
+        } else if (diffHours < 24) {
+            return `<span style="color: #e74c3c;">${date.toLocaleString()} (скоро)</span>`;
+        } else if (diffHours < 168) {
+            return `<span style="color: #f39c12;">${date.toLocaleString()}</span>`;
+        } else {
+            return date.toLocaleString();
+        }
+    } catch {
+        return isoString;
+    }
+}
+
+function createTaskElement(task) {
+    const isDone = task.done === 'True' || task.done === 'true' || task.done === '1' || task.done === true;
+    const isOverdue = task.is_overdue || (new Date(task.due_iso) < new Date() && !isDone && task.due_iso);
+    
+    const taskElement = document.createElement('li');
+    taskElement.className = `task ${isDone ? 'done' : ''} ${isOverdue ? 'overdue' : ''}`;
+    taskElement.dataset.id = task.id;
+    taskElement.dataset.uuid = task.uuid;
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'task-content';
+    
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'task-title';
+    titleDiv.textContent = task.title || '(без названия)';
+    contentDiv.appendChild(titleDiv);
+    
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'task-meta';
+    
+    if (task.uuid) {
+        const uuidSpan = document.createElement('span');
+        uuidSpan.className = 'task-uuid';
+        uuidSpan.textContent = task.uuid.substring(0, 8) + '...';
+        uuidSpan.title = task.uuid;
+        metaDiv.appendChild(uuidSpan);
+    }
+    
+    if (task.due_iso) {
+        const dueSpan = document.createElement('span');
+        dueSpan.className = 'task-due';
+        dueSpan.innerHTML = formatDateTime(task.due_iso);
+        metaDiv.appendChild(dueSpan);
+    }
+    
+    if (task.description) {
+        const descSpan = document.createElement('span');
+        descSpan.className = 'task-description';
+        descSpan.textContent = task.description;
+        descSpan.title = task.description;
+        metaDiv.appendChild(descSpan);
+    }
+    
+    const createdSpan = document.createElement('span');
+    createdSpan.className = 'task-created';
+    if (task.created_at) {
+        createdSpan.textContent = `Создано: ${new Date(task.created_at).toLocaleDateString()}`;
+    }
+    metaDiv.appendChild(createdSpan);
+    
+    contentDiv.appendChild(metaDiv);
+    taskElement.appendChild(contentDiv);
+    
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'task-actions';
+    
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'task-btn toggle-btn';
+    toggleBtn.innerHTML = `<i class="fas fa-${isDone ? 'undo' : 'check'}"></i> ${isDone ? 'Возобновить' : 'Выполнить'}`;
+    toggleBtn.onclick = () => toggleTaskDone(task.id, !isDone);
+    actionsDiv.appendChild(toggleBtn);
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'task-btn delete-btn';
+    deleteBtn.innerHTML = `<i class="fas fa-trash"></i> Удалить`;
+    deleteBtn.onclick = () => deleteTask(task.id);
+    actionsDiv.appendChild(deleteBtn);
+    
+    taskElement.appendChild(actionsDiv);
+    
+    return taskElement;
+}
+
+function updateTaskElement(taskElement, task) {
+    const isDone = task.done === 'True' || task.done === 'true' || task.done === '1' || task.done === true;
+    
+    taskElement.classList.toggle('done', isDone);
+    
+    const titleDiv = taskElement.querySelector('.task-title');
+    if (titleDiv) {
+        titleDiv.textContent = task.title || '(без названия)';
+    }
+    
+    const dueSpan = taskElement.querySelector('.task-due');
+    if (dueSpan && task.due_iso) {
+        dueSpan.innerHTML = formatDateTime(task.due_iso);
+    }
+    
+    const toggleBtn = taskElement.querySelector('.toggle-btn');
+    if (toggleBtn) {
+        toggleBtn.innerHTML = `<i class="fas fa-${isDone ? 'undo' : 'check'}"></i> ${isDone ? 'Возобновить' : 'Выполнить'}`;
+        toggleBtn.onclick = () => toggleTaskDone(task.id, !isDone);
+    }
+}
+
+// ==================== Работа с задачами ====================
+async function loadTasks(reset = true) {
+    if (appState.isLoading) return;
+    
+    appState.isLoading = true;
+    showLoading(reset);
+    
+    try {
+        const page = reset ? 1 : appState.currentPage;
+        const response = await fetch(`/api/tasks?page=${page}&per_page=${CONFIG.itemsPerPage}`);
+        
+        if (!response.ok) {
+            throw new Error(`Ошибка загрузки: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        appState.totalPages = data.meta.pages || 1;
+        appState.totalTasks = data.meta.total || 0;
+        appState.lastUpdate = new Date();
+        
+        if (reset) {
+            appState.currentPage = 1;
+            elements.tasks.innerHTML = '';
+        }
+        
+        if (data.items.length === 0 && reset) {
+            showEmptyState();
+        } else {
+            data.items.forEach(task => {
+                const existingTask = elements.tasks.querySelector(`[data-id="${task.id}"]`);
+                if (existingTask) {
+                    updateTaskElement(existingTask, task);
+                } else {
+                    const taskElement = createTaskElement(task);
+                    elements.tasks.appendChild(taskElement);
+                }
+            });
+        }
+        
+        updateLoadMoreButton();
+        updateStatsDisplay();
+        
+    } catch (error) {
+        console.error('Ошибка загрузки задач:', error);
+        showError('Не удалось загрузить задачи. Проверьте соединение с интернетом.');
+    } finally {
+        appState.isLoading = false;
+        hideLoading();
+    }
+}
+
+async function addTask() {
+    const title = elements.titleInput.value.trim();
+    const due = elements.dueInput.value;
+    
+    if (!title) {
+        showNotification('Ошибка', 'Введите название задачи', 'error');
+        elements.titleInput.focus();
+        return;
+    }
+    
+    const dueIso = due ? new Date(due).toISOString() : '';
+    
+    try {
+        const response = await fetch('/api/tasks', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                title,
+                due_iso: dueIso
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `Ошибка ${response.status}`);
+        }
+        
+        elements.titleInput.value = '';
+        elements.dueInput.value = '';
+        elements.titleInput.focus();
+        
+        showNotification('Успешно', 'Задача добавлена', 'success');
+        
+        // Обновляем список задач
+        await loadTasks(true);
+        
+    } catch (error) {
+        console.error('Ошибка добавления задачи:', error);
+        showNotification('Ошибка', `Не удалось добавить задачу: ${error.message}`, 'error');
+    }
+}
+
+async function toggleTaskDone(taskId, done) {
+    try {
+        const response = await fetch(`/api/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ done })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Ошибка ${response.status}`);
+        }
+        
+        const task = await response.json();
+        
+        showNotification('Успешно', `Задача ${done ? 'выполнена' : 'возобновлена'}`, 'success');
+        
+        // Обновляем локально
+        const taskElement = elements.tasks.querySelector(`[data-id="${taskId}"]`);
+        if (taskElement) {
+            updateTaskElement(taskElement, task);
+        }
+        
+    } catch (error) {
+        console.error('Ошибка обновления задачи:', error);
+        showNotification('Ошибка', 'Не удалось обновить задачу', 'error');
+    }
+}
+
+async function deleteTask(taskId) {
+    if (!confirm('Вы уверены, что хотите удалить эту задачу?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/tasks/${taskId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Ошибка ${response.status}`);
+        }
+        
+        removeTaskFromList(taskId);
+        showNotification('Успешно', 'Задача удалена', 'success');
+        
+    } catch (error) {
+        console.error('Ошибка удаления задачи:', error);
+        showNotification('Ошибка', 'Не удалось удалить задачу', 'error');
+    }
+}
+
+function removeTaskFromList(taskId) {
+    const taskElement = elements.tasks.querySelector(`[data-id="${taskId}"]`);
+    if (taskElement) {
+        taskElement.remove();
+    }
+    
+    // Если список пуст, показываем соответствующее сообщение
+    if (elements.tasks.children.length === 0) {
+        showEmptyState();
+    }
+}
+
+// ==================== Напоминания ====================
+async function checkReminders() {
+    try {
+        const response = await fetch('/api/check_reminders');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        
+        if (data.reminders && data.reminders.length > 0) {
+            data.reminders.forEach(reminder => {
+                showNotification(
+                    '⏰ Напоминание',
+                    `${reminder.title}\n${reminder.due_iso ? new Date(reminder.due_iso).toLocaleString() : ''}`,
+                    'reminder'
+                );
+                
+                // Проигрываем звук уведомления
+                playNotificationSound();
+            });
+        }
+    } catch (error) {
+        console.error('Ошибка проверки напоминаний:', error);
+    }
+}
+
+// ==================== Вспомогательные функции ====================
+function showLoading(reset) {
+    if (reset) {
+        elements.tasks.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Загрузка задач...</div>';
+    }
+}
+
+function hideLoading() {
+    const loadingElement = elements.tasks.querySelector('.loading');
+    if (loadingElement) {
+        loadingElement.remove();
+    }
+}
+
+function showEmptyState() {
+    elements.tasks.innerHTML = `
+        <div class="empty-state">
+            <div class="empty-state-icon">📝</div>
+            <h3>Нет задач</h3>
+            <p>У вас пока нет задач. Добавьте первую задачу!</p>
+        </div>
+    `;
+}
+
+function showError(message) {
+    elements.tasks.innerHTML = `
+        <div class="empty-state">
+            <div class="empty-state-icon">❌</div>
+            <h3>Ошибка загрузки</h3>
+            <p>${escapeHTML(message)}</p>
+            <button onclick="loadTasks(true)" class="task-btn toggle-btn" style="margin-top: 15px;">
+                <i class="fas fa-redo"></i> Повторить
+            </button>
+        </div>
+    `;
+}
+
+function updateLoadMoreButton() {
+    if (appState.currentPage < appState.totalPages) {
+        elements.loadMore.style.display = 'block';
+    } else {
+        elements.loadMore.style.display = 'none';
+    }
+}
+
+function updateStatsDisplay() {
+    if (elements.tasksCount) {
+        elements.tasksCount.textContent = `Всего задач: ${appState.totalTasks}`;
+    }
+    if (elements.lastUpdate && appState.lastUpdate) {
+        elements.lastUpdate.textContent = `Обновлено: ${appState.lastUpdate.toLocaleTimeString()}`;
+    }
+}
+
+function showNotification(title, message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+        <h4>${escapeHTML(title)}</h4>
+        <p>${escapeHTML(message)}</p>
+        <button class="close-btn" onclick="this.parentElement.remove()">
+            <i class="fas fa-times"></i>
+        </button>
+    `;
+    
+    elements.notificationContainer.appendChild(notification);
+    
+    // Автоматическое удаление через 8 секунд
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 8000);
+}
+
+function playNotificationSound() {
+    // Создаем простой звук через Web Audio API
+    try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.1, audioContext.currentTime + 0.1);
+        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+        
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (error) {
+        console.log('Не удалось воспроизвести звук уведомления');
+    }
+}
+
+// ==================== Управление автообновлением ====================
+function toggleAutoRefresh() {
+    if (appState.autoRefreshInterval) {
+        clearInterval(appState.autoRefreshInterval);
+        appState.autoRefreshInterval = null;
+        showNotification('Автообновление', 'Автообновление отключено', 'info');
+    } else {
+        startAutoRefresh();
+        showNotification('Автообновление', 'Автообновление включено', 'success');
+    }
+    
+    if (elements.autoRefreshToggle) {
+        elements.autoRefreshToggle.innerHTML = appState.autoRefreshInterval ? 
+            '<i class="fas fa-toggle-on"></i> Автообновление: ВКЛ' :
+            '<i class="fas fa-toggle-off"></i> Автообновление: ВЫКЛ';
+    }
+}
+
+function startAutoRefresh() {
+    if (appState.autoRefreshInterval) {
+        clearInterval(appState.autoRefreshInterval);
+    }
+    
+    appState.autoRefreshInterval = setInterval(() => {
+        if (!appState.isLoading && document.visibilityState === 'visible') {
+            loadTasks(true);
+        }
+    }, CONFIG.refreshTasksInterval);
+}
+
+// ==================== Обработчики событий ====================
+elements.addBtn.addEventListener('click', addTask);
+
+elements.titleInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        addTask();
+    }
+});
+
+elements.loadMore.addEventListener('click', () => {
+    if (appState.currentPage < appState.totalPages) {
+        appState.currentPage++;
+        loadTasks(false);
+    }
+});
+
+// Загрузка задач при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => {
+    // Устанавливаем минимальную дату для input datetime-local
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    
+    elements.dueInput.min = `${year}-${month}-${day}T${hours}:${minutes}`;
+    
+    // Загружаем задачи
+    loadTasks(true);
+    
+    // Фокусируемся на поле ввода
+    elements.titleInput.focus();
+    
+    // Запускаем периодическую проверку напоминаний
+    setInterval(checkReminders, CONFIG.checkRemindersInterval);
+    
+    // Запускаем автообновление если включено
+    if (CONFIG.enableAutoRefresh) {
+        startAutoRefresh();
+    }
+});
+
+// Обновляем при возвращении на вкладку
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        loadTasks(true);
+    }
+});
+
+// Обновляем при фокусе на окне
+window.addEventListener('focus', () => {
+    loadTasks(true);
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="top-bar">
+        <div class="user-info">
+            <i class="fas fa-user"></i> {{ username }}
+        </div>
+        <div class="nav-links">
+            <a href="{{ url_for('index') }}">
+                <i class="fas fa-tasks"></i> Задачи
+            </a>
+            <a href="{{ url_for('about') }}">
+                <i class="fas fa-info-circle"></i> О проекте
+            </a>
+            <a href="{{ url_for('logout') }}">
+                <i class="fas fa-sign-out-alt"></i> Выйти
+            </a>
+        </div>
+    </div>
+    
+    <div class="content">
+        <h1><i class="fas fa-clipboard-list"></i> Умная разгрузка</h1>
+        
+        <div class="controls">
+            <input 
+                id="title" 
+                type="text" 
+                placeholder="Что нужно сделать?" 
+                autocomplete="off"
+                aria-label="Название задачи"
+            >
+            <input 
+                id="due" 
+                type="datetime-local" 
+                aria-label="Срок выполнения"
+                title="Срок выполнения задачи"
+            >
+            <button id="add" aria-label="Добавить задачу">
+                <i class="fas fa-plus"></i> Добавить
+            </button>
+            <button id="load-more" aria-label="Загрузить еще">
+                <i class="fas fa-arrow-down"></i> Загрузить ещё
+            </button>
+        </div>
+        
+        <div class="status-bar">
+            <div id="tasks-count">Загрузка...</div>
+            <div id="last-update">Обновлено: --:--:--</div>
+        </div>
+        
+        <ul id="tasks" aria-label="Список задач">
+            <!-- Задачи будут загружены здесь -->
+        </ul>
+        
+        <div class="stats">
+            <p><small><i class="fas fa-info-circle"></i> Автообновление каждые 30 секунд</small></p>
+            <button id="auto-refresh-toggle" class="task-btn toggle-btn" onclick="toggleAutoRefresh()" style="margin-top: 10px;">
+                <i class="fas fa-toggle-on"></i> Автообновление: ВКЛ
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
