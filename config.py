@@ -16,7 +16,7 @@ class Config:
     
     # Если переменной окружения нет (локальная разработка), используем SQLite
     if not SQLALCHEMY_DATABASE_URI:
-        SQLALCHEMY_DATABASE_URI = 'sqlite:///smart_unload.db'
+        SQLALCHEMY_DATABASE_URI = DATABASE_URL or 'sqlite:///smart_unload.db'
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
