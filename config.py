@@ -10,13 +10,13 @@ class Config:
     # База данных - Render использует PostgreSQL
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
     
-    # Если переменная окружения есть и она начинается с postgres://, исправляем
+    # Исправление формата URL для PostgreSQL (важно для Render)
     if SQLALCHEMY_DATABASE_URI and SQLALCHEMY_DATABASE_URI.startswith("postgres://"):
         SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace("postgres://", "postgresql://", 1)
     
-    # Если переменной окружения нет (локальная разработка), используем SQLite
+    # Для локальной разработки (если нет DATABASE_URL)
     if not SQLALCHEMY_DATABASE_URI:
-        SQLALCHEMY_DATABASE_URI = DATABASE_URL or 'sqlite:///smart_unload.db'
+        SQLALCHEMY_DATABASE_URI = 'sqlite:///smart_unload.db'
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
