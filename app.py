@@ -26,6 +26,15 @@ def create_app():
 
 APP = create_app()
 
+# Добавьте после создания APP
+@APP.before_request
+def check_db():
+    try:
+        db.session.execute('SELECT 1')
+    except:
+        db.session.rollback()
+        print("⚠️ Переподключение к БД")
+
 # ==================== Routes: Auth ====================
 @APP.route('/register', methods=['GET', 'POST'])
 def register():
