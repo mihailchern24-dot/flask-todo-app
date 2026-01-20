@@ -26,7 +26,7 @@ def create_app():
 
 APP = create_app()
 
-# Добавьте после создания APP
+# Проверка подключения к БД перед запросом
 @APP.before_request
 def check_db():
     try:
@@ -272,13 +272,6 @@ def internal_error(error):
     db.session.rollback()
     return render_template('500.html'), 500
 
-# Инициализация базы данных
-with APP.app_context():
-    try:
-        db.create_all()
-        print("✅ База данных инициализирована")
-    except Exception as e:
-        print(f"❌ Ошибка БД: {e}")
-
+# НЕ УДАЛЯЙТЕ этот блок для запуска на Render!
 if __name__ == '__main__':
     APP.run(host='0.0.0.0', port=5000, debug=False)
